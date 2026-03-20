@@ -140,7 +140,7 @@ export default function VideoPlayer({
       {activeCaption && (
         <div
           key={activeCaption.id}
-          className="caption-overlay caption-enter"
+          className="caption-overlay"
           onPointerDown={handleCaptionPointerDown}
           onPointerMove={handleCaptionPointerMove}
           onPointerUp={handleCaptionPointerUp}
