@@ -20,7 +20,6 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
   const [message, setMessage] = useState("");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState<string | null>(null);
-  const [downloadExtension, setDownloadExtension] = useState("mp4");
   const exportDuration = trim.end > trim.start ? trim.end - trim.start : duration;
 
   useEffect(() => {
@@ -35,7 +34,6 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
     revokeObjectUrl(downloadUrl);
     setDownloadUrl(null);
     setDownloadName(null);
-    setDownloadExtension("mp4");
     setStage("encoding");
     setPercent(0);
     setMessage("Preparing export...");
@@ -101,7 +99,6 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
       setMessage("Download ready");
       triggerBrowserDownload(finalUrl, resolvedName);
       setDownloadName(resolvedName);
-      setDownloadExtension("mp4");
       setDownloadUrl(finalUrl);
       setStage("done");
     } catch (e: unknown) {
@@ -201,9 +198,7 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
             <p className="text-[11px] font-mono" style={{ color: "var(--text3)" }}>{Math.round(percent)}%</p>
           </div>
           <p className="text-[10px]" style={{ color: "var(--text3)" }}>
-            {renderer === "preview"
-              ? "Preview Match uses the browser renderer for closer font and caption styling, but it is slower."
-              : "Native FFmpeg renders faster on the server route, but text can differ from the live preview."}
+            Native FFmpeg export with maximum performance and quality.
           </p>
         </div>
       )}
@@ -213,12 +208,12 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
           <div className="flex items-center gap-2 p-3 rounded-lg text-sm"
             style={{ background: "rgba(62,207,142,0.08)", border: "1px solid rgba(62,207,142,0.2)", color: "#3ecf8e" }}>
             <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-            <span className="font-medium">{renderer === "native" ? "Download started in your browser." : "Export complete!"}</span>
+            <span className="font-medium">Export complete!</span>
           </div>
-          <a href={downloadUrl} download={renderer === "preview" ? `clipai-${Date.now()}.${downloadExtension}` : downloadName ?? undefined}
+          <a href={downloadUrl} download={downloadName ?? undefined}
             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg font-semibold text-sm transition-colors"
             style={{ background: "#3ecf8e", color: "#0a2e20" }}>
-            <Download className="w-4 h-4" /> {renderer === "native" ? "Download again" : `Download ${downloadExtension.toUpperCase()}`}
+            <Download className="w-4 h-4" /> Download MP4
           </a>
           <button onClick={() => {
             revokeObjectUrl(downloadUrl);

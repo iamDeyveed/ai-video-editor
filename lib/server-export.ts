@@ -149,9 +149,12 @@ async function runFfmpegEncode(options: {
   exportSettings: ServerExportSettings;
   filterGraph: string;
 }) {
-  const encoders = options.quality === "fast"
-    ? ["h264_nvenc", "h264_amf", "libx264"]
-    : ["h264_nvenc", "h264_amf", "libx264"];
+  const encoders = [
+    "h264_nvenc", // NVIDIA hardware acceleration - fastest
+    "h264_amf",   // AMD hardware acceleration
+    "h264_qsv",   // Intel Quick Sync Video
+    "libx264"     // Software fallback
+  ];
 
   let lastError: unknown = null;
 
@@ -180,8 +183,12 @@ function buildFfmpegArgs(options: {
   encoder: string;
 }) {
   const qualityArgs = getEncoderArgs(options.encoder, options.quality, options.exportSettings);
+  const threads = Math.max(1, os.cpus().length); // Use all available CPU cores
   const args = [
     "-y",
+    "-threads", threads.toString(), // Use all CPU cores
+    "-fflags", "+discardcorrupt+genpts+igndts", // Better error handling and timestamp generation
+    "-avoid_negative_ts", "make_zero", // Handle negative timestamps
     "-ss",
     `${Math.max(0, options.trim.start || 0)}`,
     "-to",
@@ -203,7 +210,9 @@ function buildFfmpegArgs(options: {
     "-pix_fmt",
     "yuv420p",
     "-movflags",
-    "+faststart",
+    "+faststart+write_colr",
+    "-fflags",
+    "+bitexact+discardcorrupt",
     options.outputPath
   );
 
@@ -223,11 +232,11 @@ function getEncoderArgs(encoder: string, quality: ServerExportQuality, exportSet
       "-c:v",
       "h264_nvenc",
       "-preset",
-      quality === "fast" ? "p2" : "p5",
+      "p1", // Fastest preset available
       "-rc",
       "vbr_hq",
       "-cq",
-      quality === "fast" ? "23" : "19",
+      "23", // Slightly higher quality for better speed/quality balance
       "-b:v",
       `${settings.videoBitrateKbps}k`,
       "-maxrate",
@@ -246,9 +255,30 @@ function getEncoderArgs(encoder: string, quality: ServerExportQuality, exportSet
       "-c:v",
       "h264_amf",
       "-quality",
-      quality === "fast" ? "speed" : "quality",
+      "speed", // Maximum speed
       "-usage",
       "transcoding",
+      "-b:v",
+      `${settings.videoBitrateKbps}k`,
+      "-maxrate",
+      `${settings.maxRateKbps}k`,
+      "-bufsize",
+      `${settings.bufferKbps}k`,
+      "-c:a",
+      "aac",
+      "-b:a",
+      `${settings.audioBitrateKbps}k`,
+    ];
+  }
+
+  if (encoder === "h264_qsv") {
+    return [
+      "-c:v",
+      "h264_qsv",
+      "-preset",
+      "veryfast", // Fastest Intel QSV preset
+      "-global_quality",
+      "23", // Quality setting for QSV
       "-b:v",
       `${settings.videoBitrateKbps}k`,
       "-maxrate",
@@ -266,9 +296,9 @@ function getEncoderArgs(encoder: string, quality: ServerExportQuality, exportSet
     "-c:v",
     "libx264",
     "-preset",
-    quality === "fast" ? "veryfast" : "medium",
+    "ultrafast", // Fastest software encoding preset
     "-crf",
-    quality === "fast" ? "21" : "17",
+    "21", // Slightly higher quality for better speed/quality balance
     "-b:v",
     `${settings.videoBitrateKbps}k`,
     "-maxrate",
@@ -289,16 +319,14 @@ function getServerExportSettings(options: {
   sourceSizeBytes: number;
   quality: ServerExportQuality;
 }): ServerExportSettings {
-  const maxDimension = options.quality === "fast" ? 1080 : Math.max(options.sourceWidth, options.sourceHeight);
+  const maxDimension = Math.max(options.sourceWidth, options.sourceHeight); // Always use source resolution for maximum quality
   const sourceBitsPerSecond = options.durationSeconds > 0
     ? (options.sourceSizeBytes * 8) / options.durationSeconds
     : 0;
   const sourceKbps = Math.max(0, Math.round(sourceBitsPerSecond / 1000));
-  const audioBitrateKbps = options.quality === "fast" ? 128 : 192;
-  const minimumVideoKbps = options.quality === "fast" ? 4500 : 9000;
-  const targetVideoKbps = options.quality === "fast"
-    ? Math.max(minimumVideoKbps, Math.round(sourceKbps * 0.9) - audioBitrateKbps)
-    : Math.max(minimumVideoKbps, Math.round(sourceKbps * 1.08) - audioBitrateKbps);
+  const audioBitrateKbps = 256; // Higher audio quality
+  const minimumVideoKbps = 15000; // Much higher minimum bitrate for better quality
+  const targetVideoKbps = Math.max(minimumVideoKbps, Math.round(sourceKbps * 1.2) - audioBitrateKbps); // Higher target bitrate
   const longestSide = Math.max(options.sourceWidth, options.sourceHeight);
   const scale = longestSide > maxDimension ? maxDimension / longestSide : 1;
 
@@ -317,15 +345,21 @@ function normalizeDimension(value: number) {
 
 function buildAssSubtitles(captions: Caption[], style: CaptionStyle, width: number, height: number) {
   const fontName = getCaptionFontExportName(style.fontFamily);
-  const primaryColor = assColor(style.color);
-  const outlineColor = style.background ? "&H00000000" : "&H00000000";
+  const primaryColor = isGlowScriptPreset(style.preset) ? "&HFFFDF8" : assColor(style.color);
+  const outlineColor = style.background ? "&H00000000" : isGlowScriptPreset(style.preset) ? "&HFFFFFF" : "&H00000000";
   const backColor = style.background ? "&H50000000" : "&H00000000";
   const borderStyle = style.background ? 3 : 1;
   const alignment = style.textAlign === "left" ? 4 : style.textAlign === "right" ? 6 : 5;
   const spacing = style.letterSpacing.toFixed(1);
   const snapPreset = isSnapCaptionPreset(style.preset);
-  const outline = style.background ? 0 : isGlowScriptPreset(style.preset) ? 1.6 : snapPreset ? 1.1 : 2.2;
-  const shadow = style.background ? 0 : isGlowScriptPreset(style.preset) ? 1.2 : snapPreset ? 0.8 : 1.6;
+  const outline = style.background ? 0 : isGlowScriptPreset(style.preset) ? 4.0 : snapPreset ? 1.1 : 2.2;
+  const shadow = style.background ? 0 : isGlowScriptPreset(style.preset) ? 3.5 : snapPreset ? 0.8 : 1.6;
+
+  // Scale font size based on output video height (assume preview is designed for 1080p equivalent)
+  // Use a stronger multiplier to achieve large caption text (nearly screen-filling)
+  const referenceHeight = 1080;
+  const exportFontMultiplier = 2.8; // tweak this for larger or smaller export caption text
+  const scaledFontSize = Math.round(style.fontSize * (height / referenceHeight) * exportFontMultiplier);
 
   const events = captions
     .map((caption) => buildAssDialogue(caption, style, width, height, alignment))
@@ -341,7 +375,7 @@ YCbCr Matrix: TV.601
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,${fontName},${style.fontSize},${primaryColor},${primaryColor},${outlineColor},${backColor},${style.preset === "social" || style.preset === "glow-script" || snapPreset ? 1 : 0},0,0,0,100,100,${spacing},0,${borderStyle},${outline},${shadow},${alignment},24,24,24,1
+Style: Caption,${fontName},${scaledFontSize},${primaryColor},${primaryColor},${outlineColor},${backColor},${style.preset === "social" || style.preset === "glow-script" || snapPreset ? 1 : 0},0,0,0,100,100,${spacing},0,${borderStyle},${outline},${shadow},${alignment},24,24,24,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -353,7 +387,7 @@ function buildAssDialogue(caption: Caption, style: CaptionStyle, width: number, 
   const x = Math.round((width * style.x) / 100);
   const y = Math.round((height * style.y) / 100);
   const text = isGlowScriptPreset(style.preset)
-    ? formatGlowCaptionForAss(caption.text, style)
+    ? formatGlowCaptionForAss(caption.text, style, height)
     : formatStandardCaptionForAss(caption.text, style);
 
   return `Dialogue: 0,${toAssTime(caption.start)},${toAssTime(caption.end)},Caption,,0,0,0,,{\\an${alignment}\\pos(${x},${y})}${text}`;
@@ -365,13 +399,24 @@ function formatStandardCaptionForAss(text: string, style: CaptionStyle) {
   return lines.join("\\N");
 }
 
-function formatGlowCaptionForAss(text: string, style: CaptionStyle) {
+function formatGlowCaptionForAss(text: string, style: CaptionStyle, height: number) {
   const lines = splitGlowCaptionIntoLines(text);
   const regularFont = getCaptionFontExportName(style.fontFamily);
   const accentFont = getCaptionFontExportName("parisienne");
-  const accentSize = Math.round(style.fontSize * 1.28);
-  const regularTag = `{\\fn${escapeAssTag(regularFont)}\\fs${style.fontSize}\\1c&Hf8fdff&\\3c&H12000000&\\bord1.6\\blur1}`;
-  const accentTag = `{\\fn${escapeAssTag(accentFont)}\\fs${accentSize}\\1c&H47BFFF&\\3c&H2B7CFF&\\bord0.8\\blur2}`;
+
+  // Scale font sizes based on output video height (assume preview is designed for 1080p equivalent)
+  const referenceHeight = 1080;
+  const exportFontMultiplier = 2.8;
+  const scaledRegularSize = Math.round(style.fontSize * (height / referenceHeight) * exportFontMultiplier);
+  const scaledAccentSize = Math.round(style.fontSize * 1.28 * (height / referenceHeight) * exportFontMultiplier);
+
+  // Match preview glow script visuals (white/cream regular + orange accent glow)
+  const regularColour = "&H00F8FDFF"; // #fffdf8
+  const accentColour = "&H0047BFFF"; // #ffbf47
+  const outlineColour = "&H00000000";
+
+  const regularTag = `{\\fn${escapeAssTag(regularFont)}\\fs${scaledRegularSize}\\1c${regularColour}\\3c${outlineColour}\\bord2.1\\shad3\\blur1.2}`;
+  const accentTag = `{\\fn${escapeAssTag(accentFont)}\\fs${scaledAccentSize}\\1c${accentColour}\\3c${outlineColour}\\bord2.1\\shad4\\blur1.8}`;
   const resetTag = `{\\r}`;
 
   return lines.map((parts) => parts.map((part) => {
