@@ -21,9 +21,7 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
   const [message, setMessage] = useState("");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState<string | null>(null);
-  const [downloadExtension, setDownloadExtension] = useState("webm");
-  const [quality, setQuality] = useState<ExportQualityMode>("fast");
-  const [renderer, setRenderer] = useState<"preview" | "native">("native");
+  const [downloadExtension, setDownloadExtension] = useState("mp4");
   const exportDuration = trim.end > trim.start ? trim.end - trim.start : duration;
 
   useEffect(() => {
@@ -38,117 +36,75 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
     revokeObjectUrl(downloadUrl);
     setDownloadUrl(null);
     setDownloadName(null);
-    setDownloadExtension(renderer === "preview" ? "webm" : "mp4");
+    setDownloadExtension("mp4");
     setStage("encoding");
     setPercent(0);
-    setMessage(renderer === "preview" ? "Preparing preview-match export..." : "Preparing native export...");
+    setMessage("Preparing export...");
 
     let progressTimer: number | null = null;
     try {
-      let blob: Blob;
+      let currentPercent = 0;
+      progressTimer = window.setInterval(() => {
+        currentPercent = Math.min(currentPercent + 4, 94);
+        setPercent(currentPercent);
+      }, 500);
 
-      if (renderer === "preview") {
-        blob = await exportVideo(
-          videoFile,
-          trim,
-          adjustments,
-          captions,
-          captionStyle,
-          { quality },
-          (s, p) => {
-            setPercent(p);
-            setMessage(
-              s === "encoding-fast"
-                ? "Rendering in browser fast mode..."
-                : s === "encoding-balanced"
-                  ? "Rendering in browser balanced mode..."
-                  : s === "encoding"
-                    ? "Rendering in browser..."
-                    : s
-            );
-          }
-        );
-      } else {
-        let currentPercent = 0;
-        progressTimer = window.setInterval(() => {
-          currentPercent = Math.min(currentPercent + (quality === "fast" ? 6 : 4), 94);
-          setPercent(currentPercent);
-        }, 500);
+      const formData = new FormData();
+      formData.append("file", videoFile, videoFile.name);
+      formData.append("payload", JSON.stringify({
+        trim,
+        adjustments,
+        captions,
+        captionStyle,
+        quality: "balanced",
+      }));
 
-        const formData = new FormData();
-        formData.append("file", videoFile, videoFile.name);
-        formData.append("payload", JSON.stringify({
-          trim,
-          adjustments,
-          captions,
-          captionStyle,
-          quality,
-        }));
+      setMessage("Rendering video...");
+      const response = await fetch("/api/export", {
+        method: "POST",
+        body: formData,
+      });
 
-        setMessage(quality === "fast" ? "Server rendering in fast mode..." : "Server rendering in balanced mode...");
-        const response = await fetch("/api/export", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const data = await response.json().catch(() => null);
-          throw new Error(data?.error || "Native export failed");
-        }
-
-        const data = await response.json().catch(() => null) as { downloadUrl?: string; fileName?: string } | null;
-        if (!data?.downloadUrl) {
-          throw new Error("Native export finished but no download link was returned");
-        }
-
-        setPercent(96);
-        setMessage("Downloading rendered MP4...");
-        const downloadResponse = await fetch(data.downloadUrl, {
-          method: "GET",
-          cache: "no-store",
-        });
-
-        if (!downloadResponse.ok) {
-          const errorData = await downloadResponse.json().catch(() => null);
-          throw new Error(errorData?.error || "Rendered file download failed");
-        }
-
-        const finalBlob = await downloadResponse.blob();
-        if (finalBlob.size < 1024) {
-          throw new Error("Rendered file was empty or invalid");
-        }
-
-        const finalUrl = URL.createObjectURL(finalBlob);
-        const resolvedName = getDownloadFileName(
-          downloadResponse.headers.get("Content-Disposition"),
-          data.fileName
-        );
-
-        setPercent(100);
-        setMessage("Download ready");
-        triggerBrowserDownload(finalUrl, resolvedName);
-        setDownloadName(resolvedName);
-        setDownloadExtension("mp4");
-        setDownloadUrl(finalUrl);
-        setStage("done");
-        return;
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Export failed");
       }
 
-      const extension = blob.type.includes("webm") ? "webm" : "mp4";
-      const url = URL.createObjectURL(blob);
-      setDownloadUrl(url);
-      setDownloadExtension(extension);
-      setStage("done");
-      setPercent(100);
+      const data = await response.json().catch(() => null) as { downloadUrl?: string; fileName?: string } | null;
+      if (!data?.downloadUrl) {
+        throw new Error("Export finished but no download link was returned");
+      }
 
-      setTimeout(() => {
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `clipai-${Date.now()}.${extension}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }, 300);
+      setPercent(96);
+      setMessage("Downloading video...");
+      const downloadResponse = await fetch(data.downloadUrl, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (!downloadResponse.ok) {
+        const errorData = await downloadResponse.json().catch(() => null);
+        throw new Error(errorData?.error || "Download failed");
+      }
+
+      const finalBlob = await downloadResponse.blob();
+      if (finalBlob.size < 1024) {
+        throw new Error("Exported file was empty or invalid");
+      }
+
+      const finalUrl = URL.createObjectURL(finalBlob);
+      const resolvedName = getDownloadFileName(
+        downloadResponse.headers.get("Content-Disposition"),
+        data.fileName
+      );
+
+      setPercent(100);
+      setMessage("Download ready");
+      triggerBrowserDownload(finalUrl, resolvedName);
+      setDownloadName(resolvedName);
+      setDownloadExtension("mp4");
+      setDownloadUrl(finalUrl);
+      setStage("done");
     } catch (e: unknown) {
       setStage("error");
       setMessage(e instanceof Error ? e.message : "Export failed");
@@ -208,9 +164,7 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
         <SummaryRow label="Duration" value={formatTimeShort(Math.max(exportDuration, 0))} />
         <SummaryRow label="Color grade" value={adjustments.lut !== "none" ? adjustments.lut.replace(/_/g, " ") : "Manual"} />
         <SummaryRow label="Captions" value={captions.length > 0 ? `${captions.length} chunks` : "None"} />
-        <SummaryRow label="Renderer" value={renderer === "preview" ? "Preview Match Browser" : "Native FFmpeg"} />
-        <SummaryRow label="Quality" value={quality === "fast" ? "Fast 1080p target" : "Balanced source-size target"} />
-        <SummaryRow label="Format" value={renderer === "preview" ? "Browser recorded video" : "Native FFmpeg MP4"} />
+        <SummaryRow label="Format" value="MP4" />
       </div>
 
       <div className="rounded-lg p-3 space-y-2" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
