@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Download, Loader2, CheckCircle2, AlertCircle, Clapperboard } from "lucide-react";
 import { Caption, CaptionStyle, VideoAdjustments, TrimRange } from "@/types";
-import { exportVideo, type ExportQualityMode } from "@/lib/ffmpeg";
 import { formatTimeShort } from "@/lib/filters";
 
 interface ExportPanelProps {
@@ -165,64 +164,6 @@ export default function ExportPanel({ videoFile, trim, duration, adjustments, ca
         <SummaryRow label="Color grade" value={adjustments.lut !== "none" ? adjustments.lut.replace(/_/g, " ") : "Manual"} />
         <SummaryRow label="Captions" value={captions.length > 0 ? `${captions.length} chunks` : "None"} />
         <SummaryRow label="Format" value="MP4" />
-      </div>
-
-      <div className="rounded-lg p-3 space-y-2" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
-        <p className="text-[10px] font-semibold tracking-widest uppercase" style={{ color: "var(--text3)" }}>Export Renderer</p>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { id: "native" as const, label: "Native FFmpeg", hint: "MP4 download, higher quality" },
-            { id: "preview" as const, label: "Preview Match", hint: "Closest look, slower" },
-          ].map((option) => (
-            <button
-              key={option.id}
-              onClick={() => setRenderer(option.id)}
-              disabled={stage === "encoding"}
-              className="rounded-lg px-3 py-2 text-left transition-colors"
-              style={{
-                background: renderer === option.id ? "rgba(79,127,255,0.12)" : "var(--surface3)",
-                border: renderer === option.id ? "1px solid rgba(79,127,255,0.45)" : "1px solid var(--border)",
-                opacity: stage === "encoding" ? 0.65 : 1,
-              }}
-            >
-              <p className="text-[12px] font-semibold" style={{ color: renderer === option.id ? "var(--accent2)" : "var(--text)" }}>
-                {option.label}
-              </p>
-              <p className="text-[10px]" style={{ color: "var(--text3)" }}>
-                {option.hint}
-              </p>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="rounded-lg p-3 space-y-2" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
-        <p className="text-[10px] font-semibold tracking-widest uppercase" style={{ color: "var(--text3)" }}>Export Speed</p>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { id: "fast" as const, label: "Fast", hint: "Quicker 1080p export" },
-            { id: "balanced" as const, label: "Balanced", hint: "Keeps more of the source file" },
-          ].map((option) => (
-            <button
-              key={option.id}
-              onClick={() => setQuality(option.id)}
-              disabled={stage === "encoding"}
-              className="rounded-lg px-3 py-2 text-left transition-colors"
-              style={{
-                background: quality === option.id ? "rgba(79,127,255,0.12)" : "var(--surface3)",
-                border: quality === option.id ? "1px solid rgba(79,127,255,0.45)" : "1px solid var(--border)",
-                opacity: stage === "encoding" ? 0.65 : 1,
-              }}
-            >
-              <p className="text-[12px] font-semibold" style={{ color: quality === option.id ? "var(--accent2)" : "var(--text)" }}>
-                {option.label}
-              </p>
-              <p className="text-[10px]" style={{ color: "var(--text3)" }}>
-                {option.hint}
-              </p>
-            </button>
-          ))}
-        </div>
       </div>
 
       {stage !== "done" && (
